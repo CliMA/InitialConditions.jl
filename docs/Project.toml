@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+InitialConditions = "a7be033f-8c2c-4c2d-9045-a1e5e881f8d2"
+
+[compat]
+Documenter = "1"
