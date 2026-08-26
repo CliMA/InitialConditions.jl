@@ -199,7 +199,7 @@ function process_albedo(source_path, output_path; date = nothing)
         lon, lat = read_lonlat(ncin)
         ref_date = reference_date(ncin, date)
         lon360, perm = roll_longitudes(lon)
-        albedo = nearest_neighbor_fill(read_surface_field(ncin, "fal"))[perm, :]
+        albedo = nearest_neighbor_fill(read_surface_field(ncin, "fal")[perm, :])
         time_points = monthly_time_points(ref_date)
         NCDatasets.NCDataset(output_path, "c") do ncout
             define_lonlat_time!(ncout, lon360, lat, time_points)

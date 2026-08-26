@@ -13,9 +13,10 @@ function process_sst(source_path, output_path; date = nothing)
     NCDatasets.NCDataset(source_path) do ncin
         lon, lat = read_lonlat(ncin)
         ref_date = reference_date(ncin, date)
-        sst = nearest_neighbor_fill(read_surface_field(ncin, "sst")) .- 273.15
         lon360, perm = roll_longitudes(lon)
-        sst = sst[perm, :]
+        # Roll before filling, as WeatherQuest does. The fill does not wrap in
+        # longitude, so the axis order decides where its seam falls.
+        sst = nearest_neighbor_fill(read_surface_field(ncin, "sst")[perm, :]) .- 273.15
         time_points = monthly_time_points(ref_date)
         NCDatasets.NCDataset(output_path, "c") do ncout
             define_lonlat_time!(ncout, lon360, lat, time_points)
@@ -52,10 +53,9 @@ function process_sic(source_path, output_path; date = nothing)
     NCDatasets.NCDataset(source_path) do ncin
         lon, lat = read_lonlat(ncin)
         ref_date = reference_date(ncin, date)
-        sic = clamp.(zero_fill(read_surface_field(ncin, "siconc")) .* 100, 0, 100)
         lon360, perm = roll_longitudes(lon)
-        sic = sic[perm, :]
-        istl1 = nearest_neighbor_fill(read_surface_field(ncin, "istl1"))[perm, :]
+        sic = clamp.(zero_fill(read_surface_field(ncin, "siconc")[perm, :]) .* 100, 0, 100)
+        istl1 = nearest_neighbor_fill(read_surface_field(ncin, "istl1")[perm, :])
         time_points = monthly_time_points(ref_date)
         NCDatasets.NCDataset(output_path, "c") do ncout
             define_lonlat_time!(ncout, lon360, lat, time_points)
@@ -65,7 +65,7 @@ function process_sic(source_path, output_path; date = nothing)
                 sic,
                 length(time_points);
                 attrib = Dict(
-                    "standard_name" => "sea_ice_cover",
+                    "standard_name" => "sea_ice_area_fraction",
                     "long_name" => "Sea Ice Concentration",
                     "units" => "%",
                     "varname" => "SEAICE",
@@ -77,6 +77,7 @@ function process_sic(source_path, output_path; date = nothing)
                 istl1,
                 length(time_points);
                 attrib = Dict(
+                    "standard_name" => "sea_ice_temperature",
                     "long_name" => "Ice temperature layer 1",
                     "units" => "K",
                     "varname" => "ISTL1",

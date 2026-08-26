@@ -4,7 +4,7 @@
 Replace `missing` and `NaN` with 0. Use this for masked fields that must be 0
 outside the mask, such as soil moisture, soil temperature, and snow.
 """
-zero_fill(field) = replace(x -> (ismissing(x) || isnan(x)) ? 0.0 : Float64(x), field)
+zero_fill(field) = Float64[(ismissing(x) || isnan(x)) ? 0.0 : Float64(x) for x in field]
 
 """
     nearest_neighbor_fill(field)
@@ -15,9 +15,11 @@ search over the 8-connected grid. Use this for fields that must have a value
 everywhere but have no meaningful fill value, such as SST over land and snow
 temperature over ocean.
 
-The search does not wrap in longitude, so cells near the dateline get their
-fill from the same side. Port of `fill_nans_nearest_neighbor` in WeatherQuest
-`interpolate.jl`, with the BFS in place of ScatteredInterpolation.
+The search does not wrap around the edges of the array, so cells at the seam of
+the longitude axis get their fill from the same side. Roll the longitudes
+before filling, as WeatherQuest does, so both put that seam in the same place.
+Port of `fill_nans_nearest_neighbor` in WeatherQuest `interpolate.jl`, with the
+BFS in place of ScatteredInterpolation.
 """
 function nearest_neighbor_fill(matrix::AbstractMatrix)
     filled = Float64[ismissing(x) ? NaN : Float64(x) for x in matrix]
@@ -99,6 +101,18 @@ const LAT_ATTRIB = Dict(
 )
 
 """
+    lat_attributes(lat)
+
+The latitude attributes, with the `stored_direction` that WeatherQuest writes.
+ERA5 stores latitude decreasing, and only the integrated-land file sorts it, so
+read the direction off the axis rather than hard coding it.
+"""
+function lat_attributes(lat)
+    direction = issorted(lat) ? "increasing" : "decreasing"
+    return merge(LAT_ATTRIB, Dict("stored_direction" => direction))
+end
+
+"""
     define_lonlat_time!(ncout, lon, lat, time_points)
 
 Define the lon and lat dimensions with their coordinate variables. Also
@@ -108,7 +122,8 @@ function define_lonlat_time!(ncout, lon, lat, time_points)
     NCDatasets.defDim(ncout, "lon", length(lon))
     NCDatasets.defDim(ncout, "lat", length(lat))
     lon_var = NCDatasets.defVar(ncout, "lon", Float32, ("lon",), attrib = LON_ATTRIB)
-    lat_var = NCDatasets.defVar(ncout, "lat", Float32, ("lat",), attrib = LAT_ATTRIB)
+    lat_var =
+        NCDatasets.defVar(ncout, "lat", Float32, ("lat",), attrib = lat_attributes(lat))
     lon_var[:] = lon
     lat_var[:] = lat
     if !isnothing(time_points)

@@ -8,7 +8,9 @@ single-level geopotential renamed to `surface_geopotential`. Port of
 including the geopotential rename.
 
 Keep the dimension names `longitude`, `latitude`, `pressure_level`, and
-`valid_time`, because ClimaAtmos asserts them.
+`valid_time`, because ClimaAtmos asserts them. An `expver` dimension, which CDS
+adds for a date inside the ERA5T window, is collapsed onto its last index and
+dropped, as WeatherQuest `_resolve_expver_conflict` does.
 
 Write the levels in order of decreasing pressure, which is increasing
 altitude. ClimaAtmos interpolates each column in altitude and assumes that
@@ -27,16 +29,18 @@ function build_raw(pressure_path, surface_path, output_path)
             end
             level_perm = sortperm(Array(ncp["pressure_level"]); rev = true)
             for (name, len) in ncp.dim
+                name in EXPVER_DIM_NAMES && continue
                 NCDatasets.defDim(ncout, name, len)
             end
             for (name, var) in ncp
-                dims = NCDatasets.dimnames(var)
-                data = Array(var)
+                name in EXPVER_DIM_NAMES && continue
+                data, dims = drop_expver(Array(var), NCDatasets.dimnames(var))
                 level_dim = findfirst(==("pressure_level"), dims)
                 isnothing(level_dim) || (data = permute_along(data, level_dim, level_perm))
                 attrib = clean_attributes(var)
                 if eltype(data) <: Union{Missing, AbstractFloat}
-                    data = Float32.(replace(data, missing => NaN))
+                    # A plain Float32 array, so NCDatasets adds no _FillValue
+                    data = Float32.(coalesce.(data, NaN))
                 end
                 NCDatasets.defVar(ncout, name, data, dims; attrib = attrib)
             end
@@ -47,12 +51,12 @@ function build_raw(pressure_path, surface_path, output_path)
                 haskey(ncs, src_name) ||
                     error("Variable $src_name not found in the CDS surface file")
                 var = ncs[src_name]
-                dims = NCDatasets.dimnames(var)
+                data, dims = drop_expver(Array(var), NCDatasets.dimnames(var))
                 all(d -> haskey(ncout.dim, d), dims) || error(
                     "The CDS surface file grid does not match the " *
                     "pressure-level file grid (dims $(dims))",
                 )
-                data = Float32.(replace(Array(var), missing => NaN))
+                data = Float32.(coalesce.(data, NaN))
                 attrib = clean_attributes(var)
                 attrib["varname"] = dst_name
                 NCDatasets.defVar(ncout, dst_name, data, dims; attrib = attrib)

@@ -27,11 +27,13 @@ import NCDatasets
 
 import ..InitialConditions as IC
 using ..InitialConditions:
+    EXPVER_DIM_NAMES,
     check_no_nan,
     check_present,
     clean_attributes,
     datestamp,
     define_lonlat_time!,
+    drop_expver,
     find_dim,
     monthly_time_points,
     nearest_neighbor_fill,

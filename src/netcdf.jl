@@ -1,6 +1,7 @@
 const LON_DIM_NAMES = ("longitude", "lon")
 const LAT_DIM_NAMES = ("latitude", "lat")
 const TIME_DIM_NAMES = ("valid_time", "time")
+const EXPVER_DIM_NAMES = ("expver",)
 
 """
 Attributes that you must not copy when you write decoded data.
@@ -20,6 +21,26 @@ function find_dim(dims, candidates, what)
 end
 
 """
+    drop_expver(data, dims)
+
+`data` with any `expver` dimension collapsed onto its last index, and the
+dimension names that are left.
+
+CDS returns two experiment versions for a date inside the ERA5T window, `1` for
+final ERA5 and `5` for the preliminary ERA5T, and only one of them holds data.
+Taking the first index would silently give an all-missing field for a recent
+date. Port of `_resolve_expver_conflict` in WeatherQuest
+`get_initial_conditions.py`, which selects the largest `expver` and drops the
+coordinate.
+"""
+function drop_expver(data, dims)
+    idx = findfirst(in(EXPVER_DIM_NAMES), dims)
+    isnothing(idx) && return data, dims
+    slices = ntuple(i -> i == idx ? size(data, idx) : Colon(), ndims(data))
+    return data[slices...], Tuple(d for (i, d) in enumerate(dims) if i != idx)
+end
+
+"""
     read_surface_field(ds, name)
 
 Read the 2D field `name` as a `(lon, lat)` matrix of
@@ -28,13 +49,10 @@ Read the 2D field `name` as a `(lon, lat)` matrix of
 function read_surface_field(ds, name)
     haskey(ds, name) || error("Variable $name not found in $(NCDatasets.path(ds))")
     var = ds[name]
-    dims = NCDatasets.dimnames(var)
+    data, dims = drop_expver(Array(var), NCDatasets.dimnames(var))
     lon_idx = find_dim(dims, LON_DIM_NAMES, "longitude")
     lat_idx = find_dim(dims, LAT_DIM_NAMES, "latitude")
-    data = Array(var)
-    slices = map(enumerate(dims)) do (i, _)
-        (i == lon_idx || i == lat_idx) ? Colon() : 1
-    end
+    slices = ntuple(i -> (i == lon_idx || i == lat_idx) ? Colon() : 1, ndims(data))
     field = data[slices...]
     lon_idx_2d = lon_idx < lat_idx ? 1 : 2
     lon_idx_2d == 1 || (field = permutedims(field))

@@ -50,7 +50,11 @@ set `CDSAPI_URL` and `CDSAPI_KEY` instead.
 The requests and the processing are ported from the private
 [CliMA/WeatherQuest](https://github.com/CliMA/WeatherQuest) repository, which
 builds the `wxquest_initial_conditions` artifact. Ported functions name their
-WeatherQuest source in their docstring. Two differences: the atmosphere state
-uses the 37 ERA5 pressure levels rather than the 137 model levels, so ClimaAtmos
-interpolates it in the vertical, and the files hold only the variables that a
-consumer reads.
+WeatherQuest source in their docstring, and WeatherQuest
+`processing/preprocessing.jl` now calls the `process_*` functions here rather
+than its own copies. The differences that remain are deliberate: the atmosphere
+state uses the 37 ERA5 pressure levels rather than the 137 model levels, so
+ClimaAtmos interpolates it in the vertical; the levels are written from the
+surface up rather than in the order CDS delivers them; and the files hold only
+the variables that a consumer reads. The
+[documentation](https://clima.github.io/InitialConditions.jl/dev/) lists them.

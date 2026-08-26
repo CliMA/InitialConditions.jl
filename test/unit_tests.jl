@@ -20,26 +20,75 @@ const TEST_GEOPOTENTIAL = [5.4e4, 1.5e4, 1.0e3]
 
 # The land mask for the fixtures: the first three longitudes are land
 is_land(i, j) = i <= 3
+is_ocean(i, j) = !is_land(i, j)
+
+# CDS adds an `expver` dimension for a date inside the ERA5T window. Index 1 is
+# final ERA5, which has no data there, and the last index is ERA5T.
+const NEXPVER = 2
 
 """
-Write a fake CDS pressure-levels download.
+Define the longitude, latitude, and valid_time coordinates that every CDS
+download carries.
 """
-function write_fake_pressure_file(path)
-    NCDatasets.NCDataset(path, "c") do ds
-        NCDatasets.defDim(ds, "longitude", NLON)
-        NCDatasets.defDim(ds, "latitude", NLAT)
-        NCDatasets.defDim(ds, "pressure_level", NLEVELS)
-        NCDatasets.defDim(ds, "valid_time", 1)
-        NCDatasets.defVar(ds, "longitude", TEST_LON, ("longitude",))
-        NCDatasets.defVar(ds, "latitude", TEST_LAT, ("latitude",))
-        NCDatasets.defVar(ds, "pressure_level", TEST_PRESSURE_LEVELS, ("pressure_level",))
-        NCDatasets.defVar(ds, "valid_time", [TEST_DATE], ("valid_time",))
-        dims = ("longitude", "latitude", "pressure_level", "valid_time")
-        z = Array{Float64}(undef, NLON, NLAT, NLEVELS, 1)
-        for k in 1:NLEVELS
-            z[:, :, k, 1] .= TEST_GEOPOTENTIAL[k]
+function define_fake_coords!(ds)
+    NCDatasets.defDim(ds, "longitude", NLON)
+    NCDatasets.defDim(ds, "latitude", NLAT)
+    NCDatasets.defDim(ds, "valid_time", 1)
+    NCDatasets.defVar(ds, "longitude", TEST_LON, ("longitude",))
+    NCDatasets.defVar(ds, "latitude", TEST_LAT, ("latitude",))
+    NCDatasets.defVar(ds, "valid_time", [TEST_DATE], ("valid_time",))
+    return nothing
+end
+
+"""
+The `(lon, lat, level, time)` geopotential of the fixtures: uniform in the
+horizontal, and growing with the level index.
+"""
+function test_geopotential()
+    z = Array{Float64}(undef, NLON, NLAT, NLEVELS, 1)
+    for k in 1:NLEVELS
+        z[:, :, k, 1] .= TEST_GEOPOTENTIAL[k]
+    end
+    return z
+end
+
+"""
+    fake_var_writer(ds, dims, expver)
+
+Define the `expver` dimension on `ds` when `expver`, and return the function
+that writes one field of the fixture on `dims`. With `expver` the field goes
+into the last slice of that dimension and the rest is missing, which is how CDS
+delivers a date inside the ERA5T window.
+"""
+function fake_var_writer(ds, dims, expver)
+    if expver
+        NCDatasets.defDim(ds, "expver", NEXPVER)
+        NCDatasets.defVar(ds, "expver", collect(1:NEXPVER), ("expver",))
+        dims = (dims..., "expver")
+    end
+    return function (name, field)
+        if expver
+            padded = Array{Union{Missing, Float64}}(missing, size(field)..., NEXPVER)
+            selectdim(padded, ndims(padded), NEXPVER) .= field
+            field = padded
         end
-        NCDatasets.defVar(ds, "z", z, dims)
+        return NCDatasets.defVar(ds, name, field, dims; fillvalue = -9.0e33)
+    end
+end
+
+"""
+Write a fake CDS pressure-levels download. With `expver = true` it carries the
+extra `expver` dimension that CDS adds inside the ERA5T window.
+"""
+function write_fake_pressure_file(path; expver = false)
+    NCDatasets.NCDataset(path, "c") do ds
+        define_fake_coords!(ds)
+        NCDatasets.defDim(ds, "pressure_level", NLEVELS)
+        NCDatasets.defVar(ds, "pressure_level", TEST_PRESSURE_LEVELS, ("pressure_level",))
+        dims = ("longitude", "latitude", "pressure_level", "valid_time")
+        write_var! = fake_var_writer(ds, dims, expver)
+
+        write_var!("z", test_geopotential())
         for (name, value) in (
             ("t", 280.0),
             ("q", 0.005),
@@ -51,8 +100,7 @@ function write_fake_pressure_file(path)
             ("crwc", 1.0e-6),
             ("cswc", 1.0e-6),
         )
-            data = fill(value, NLON, NLAT, NLEVELS, 1)
-            NCDatasets.defVar(ds, name, data, dims)
+            write_var!(name, fill(value, NLON, NLAT, NLEVELS, 1))
         end
     end
     return path
@@ -61,18 +109,15 @@ end
 """
 Write a fake CDS single-levels download. The ocean fields `sst`, `siconc`,
 and `istl1` are missing over land. The soil fields are missing over ocean.
+With `expver = true` it carries the extra `expver` dimension.
 """
-function write_fake_surface_file(path)
+function write_fake_surface_file(path; expver = false)
     NCDatasets.NCDataset(path, "c") do ds
-        NCDatasets.defDim(ds, "longitude", NLON)
-        NCDatasets.defDim(ds, "latitude", NLAT)
-        NCDatasets.defDim(ds, "valid_time", 1)
-        NCDatasets.defVar(ds, "longitude", TEST_LON, ("longitude",))
-        NCDatasets.defVar(ds, "latitude", TEST_LAT, ("latitude",))
-        NCDatasets.defVar(ds, "valid_time", [TEST_DATE], ("valid_time",))
-        dims = ("longitude", "latitude", "valid_time")
+        define_fake_coords!(ds)
+        write_var! = fake_var_writer(ds, ("longitude", "latitude", "valid_time"), expver)
+
         for (name, value) in (("skt", 285.0), ("sp", 1.0e5), ("z", 100.0), ("fal", 0.2))
-            NCDatasets.defVar(ds, name, fill(value, NLON, NLAT, 1), dims)
+            write_var!(name, fill(value, NLON, NLAT, 1))
         end
         ocean_only = (("sst", 290.0), ("siconc", 0.5), ("istl1", 271.0))
         land_only = (
@@ -88,14 +133,12 @@ function write_fake_surface_file(path)
             ("src", 0.001),
             ("tsn", 265.0),
         )
-        for (masked, fields) in
-            ((is_land, ocean_only), ((i, j) -> !is_land(i, j), land_only))
+        for (masked, fields) in ((is_land, ocean_only), (is_ocean, land_only))
             for (name, value) in fields
-                data = Array{Union{Missing, Float64}}(undef, NLON, NLAT, 1)
-                for j in 1:NLAT, i in 1:NLON
-                    data[i, j, 1] = masked(i, j) ? missing : value
-                end
-                NCDatasets.defVar(ds, name, data, dims; fillvalue = -9.0e33)
+                write_var!(
+                    name,
+                    [masked(i, j) ? missing : value for i in 1:NLON, j in 1:NLAT, _ in 1:1],
+                )
             end
         end
     end
@@ -328,24 +371,18 @@ end
         # ClimaAtmos cannot interpolate
         path = joinpath(dir, "reversed.nc")
         NCDatasets.NCDataset(path, "c") do ds
-            NCDatasets.defDim(ds, "longitude", NLON)
-            NCDatasets.defDim(ds, "latitude", NLAT)
+            define_fake_coords!(ds)
             NCDatasets.defDim(ds, "pressure_level", NLEVELS)
-            NCDatasets.defDim(ds, "valid_time", 1)
             NCDatasets.defVar(
                 ds,
                 "pressure_level",
                 TEST_PRESSURE_LEVELS,
                 ("pressure_level",),
             )
-            z = Array{Float64}(undef, NLON, NLAT, NLEVELS, 1)
-            for k in 1:NLEVELS
-                z[:, :, k, 1] .= TEST_GEOPOTENTIAL[k]
-            end
             NCDatasets.defVar(
                 ds,
                 "z",
-                z,
+                test_geopotential(),
                 ("longitude", "latitude", "pressure_level", "valid_time"),
             )
         end
@@ -431,6 +468,78 @@ end
         raw = joinpath(dir, "raw.nc")
         @test ERA5.build_raw(pressure, source, raw) == raw
         @test isfile(raw)
+    end
+end
+
+@testset "output attributes match WeatherQuest" begin
+    mktempdir() do dir
+        source = joinpath(dir, "era5_single_levels.nc")
+        write_fake_surface_file(source)
+
+        sic = ERA5.process_sic(source, joinpath(dir, "sic.nc"))
+        NCDatasets.NCDataset(sic) do ds
+            # The CF standard name, as WeatherQuest `preprocess_sic` writes it
+            @test ds["SEAICE"].attrib["standard_name"] == "sea_ice_area_fraction"
+            @test ds["ISTL1"].attrib["standard_name"] == "sea_ice_temperature"
+            # ERA5 stores latitude decreasing and this file keeps that order
+            @test !issorted(Array(ds["lat"]))
+            @test ds["lat"].attrib["stored_direction"] == "decreasing"
+        end
+
+        # The integrated-land file is the one that sorts latitude
+        land = ERA5.process_land(source, joinpath(dir, "land.nc"))
+        NCDatasets.NCDataset(land) do ds
+            @test issorted(Array(ds["lat"]))
+            @test ds["lat"].attrib["stored_direction"] == "increasing"
+        end
+    end
+end
+
+@testset "ERA5T files select the later experiment version" begin
+    # CDS returns an `expver` dimension for a date inside the ERA5T window, and
+    # the final-ERA5 slice has no data there. Taking the first slice would give
+    # an all-missing field, so every processor must take the last one.
+    mktempdir() do dir
+        surface = joinpath(dir, "surface_expver.nc")
+        pressure = joinpath(dir, "pressure_expver.nc")
+        write_fake_surface_file(surface; expver = true)
+        write_fake_pressure_file(pressure; expver = true)
+        processed = (process, name) -> process(surface, joinpath(dir, name))
+
+        NCDatasets.NCDataset(processed(ERA5.process_sst, "sst.nc")) do ds
+            @test all(Array(ds["SST"]) .≈ 290.0 - 273.15)
+        end
+        NCDatasets.NCDataset(processed(ERA5.process_sic, "sic.nc")) do ds
+            @test maximum(Array(ds["SEAICE"])) ≈ 50.0
+            @test all(Array(ds["ISTL1"]) .≈ 271.0)
+        end
+        NCDatasets.NCDataset(processed(ERA5.process_land, "land.nc")) do ds
+            @test all(Array(ds["skt"]) .≈ 285.0)
+            @test maximum(Array(ds["stl"])) ≈ 283.0
+        end
+        NCDatasets.NCDataset(processed(ERA5.process_bucket, "bucket.nc")) do ds
+            @test minimum(Array(ds["T"])) > 100
+            @test maximum(Array(ds["S"])) ≈ 0.1
+        end
+        NCDatasets.NCDataset(processed(ERA5.process_albedo, "albedo.nc")) do ds
+            @test all(Array(ds["sw_alb_clr"]) .≈ 0.2)
+        end
+
+        # `build_raw` drops the dimension rather than carrying it forward,
+        # because ClimaAtmos indexes the raw file positionally
+        raw = ERA5.build_raw(pressure, surface, joinpath(dir, "raw.nc"))
+        NCDatasets.NCDataset(raw) do ds
+            @test !haskey(ds.dim, "expver")
+            @test !haskey(ds, "expver")
+            @test size(Array(ds["t"])) == (NLON, NLAT, NLEVELS, 1)
+            @test all(Array(ds["t"]) .≈ 280.0f0)
+            @test all(Array(ds["surface_geopotential"]) .== 100.0f0)
+            # Decoded data carries no leftover encoding attributes
+            for name in ("t", "z", "skt", "sp", "surface_geopotential")
+                @test !haskey(ds[name].attrib, "_FillValue")
+            end
+        end
+        NCDatasets.NCDataset(ds -> ERA5.validate_raw(ds, raw), raw)
     end
 end
 

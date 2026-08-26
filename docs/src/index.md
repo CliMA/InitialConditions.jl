@@ -127,10 +127,36 @@ the level index. [`validate_dir`](@ref InitialConditions.ERA5.validate_dir) enfo
 backwards produces a plausible file that silently initializes the whole column
 from the model top.
 
+### Differences from WeatherQuest
+
 The processing follows the [WeatherQuest](https://github.com/CliMA/WeatherQuest)
-pipeline that produced the `wxquest_initial_conditions` artifact, with one
-difference: the atmosphere state uses the 37 ERA5 pressure levels rather than
-the 137 model levels.
+pipeline that produced the `wxquest_initial_conditions` artifact, and
+WeatherQuest `processing/preprocessing.jl` now calls these `process_*` functions
+rather than its own copies. The remaining differences are deliberate:
+
+  - The atmosphere state uses the 37 ERA5 pressure levels rather than the 137
+    model levels, so ClimaAtmos interpolates it in the vertical.
+
+  - The pressure levels are written from the surface up. CDS delivers them from
+    the top down, and WeatherQuest passes that order through, which makes the
+    vertical interpolation extrapolate the model top over the whole column.
+
+  - The files hold only the variables a consumer reads. Dropped, with the
+    consumer checked in each case: `si` and `sie` from the land file, which
+    ClimaLand derives from `swvl` and `stl`; `lai`, which ClimaLand takes from
+    MODIS; `ISTL2` to `ISTL4`, since the prescribed sea ice model reads only
+    `ISTL1`; and `fsr` and `flsr` from the albedo file. The raw atmosphere file
+    carries the pressure-level fields plus `skt`, `sp`, and
+    `surface_geopotential`, rather than everything both downloads contain.
+
+  - One single-level request covers the surface, ocean, and land fields, where
+    WeatherQuest splits them across a `surface` and a `land` request. Every
+    variable requested is an instantaneous field, so CDS answers with one
+    NetCDF file rather than a zip archive of one file per step type.
+
+  - `subsurface_water_z_max` defaults to 0.5 m, which is what the WeatherQuest
+    `--subsurface-water-z-max` flag defaults to, not the 1.0 m default of its
+    `interpolate_bucket`.
 
 ### Testing
 
