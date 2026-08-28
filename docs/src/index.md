@@ -68,8 +68,13 @@ The CDS download needs a free CDS account:
     You can set the `CDSAPI_URL` and `CDSAPI_KEY` environment variables
     instead.
 
+The model-level state comes from
+[`reanalysis-era5-complete`](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-complete),
+which has a licence of its own to accept alongside the ERA5 one.
+
 The Copernicus servers queue the requests. A download usually takes minutes,
-but it can take hours when the queue is busy. Each date is about 1 to 2 GB.
+but it can take hours when the queue is busy. A date is roughly 4 GB, most of
+it the seven model-level fields on 137 levels.
 
 ### Running under MPI
 
@@ -113,19 +118,35 @@ For a start date `YYYYMMDD`, the package writes these files:
 
 | File                                     | Holds                                                                                                          | Read by                                   |
 |:---------------------------------------- |:-------------------------------------------------------------------------------------------------------------- |:----------------------------------------- |
-| `era5_raw_YYYYMMDD_0000.nc`              | `u`, `v`, `w`, `t`, `q`, `z`, cloud condensate on 37 pressure levels, plus `skt`, `sp`, `surface_geopotential` | ClimaAtmos `WeatherModel`                 |
+| `era5_raw_YYYYMMDD_0000.nc`              | `u`, `v`, `w`, `t`, `q`, `clwc`, `ciwc` on the 137 ERA5 model levels, plus `skt`, `sp`, `surface_geopotential` | WeatherQuest `to_z_levels_3d_model`       |
 | `sst_processed_YYYYMMDD_0000.nc`         | `SST` in Celsius, land filled by nearest neighbor                                                              | prescribed ocean                          |
 | `sic_processed_YYYYMMDD_0000.nc`         | `SEAICE` in percent, and `ISTL1` in Kelvin                                                                     | prescribed sea ice                        |
 | `era5_land_processed_YYYYMMDD_0000.nc`   | `skt`, `tsn`, `swe`, `swvl`, `stl`, with 0 over ocean                                                          | ClimaLand integrated land                 |
 | `era5_bucket_processed_YYYYMMDD_0000.nc` | `W`, `Ws`, `S`, `T`, `tsn`, `skt`                                                                              | bucket land                               |
 | `albedo_processed_YYYYMMDD_0000.nc`      | `sw_alb_clr`, the ERA5 forecast albedo                                                                         | bucket, when `bucket_albedo_type: "era5"` |
 
-ClimaAtmos interpolates the atmosphere state onto its own grid, including
-vertically. That interpolation assumes the vertical coordinate increases, so the
-levels run from the surface up: pressure decreases and altitude increases with
-the level index. [`validate_dir`](@ref InitialConditions.ERA5.validate_dir) enforces it, because getting it
-backwards produces a plausible file that silently initializes the whole column
-from the model top.
+The atmosphere state comes from `reanalysis-era5-complete`, the MARS archive,
+on the 137 native model levels. Levels keep the order MARS delivers them, level
+1 at the model top and level 137 at the surface; `to_z_levels_3d_model` reads
+that order off the `model_level` coordinate and flips it itself, and the hybrid
+coefficients that turn levels into pressures are indexed by level number.
+
+Run WeatherQuest `processing/preprocessing.jl --groups atmos` over the cache
+directory to turn the raw file into the `era5_init_processed_internal_*.nc`
+that ClimaAtmos reads. That is the only atmosphere path WeatherQuest has:
+`to_z_levels_3d_model` takes model levels and rejects pressure levels.
+Everything it needs is in the raw file except the L137 hybrid `a`/`b`
+coefficients, which `read_hybrid_coeffs` takes from its bundled
+`processing/l137_hybrid_ab.txt`.
+
+ClimaAtmos cannot read the raw file on its own. `weather_model_data_path` falls
+back to `to_z_levels_1d` when no processed file is present, and that fallback
+asserts a `pressure_level` dimension, so WeatherQuest has to run in between.
+
+MARS can answer a `1/to/137` request with level 1 alone.
+[`validate_dir`](@ref InitialConditions.ERA5.validate_dir) rejects that, because
+the truncated file is otherwise plausible and would initialize the whole column
+from a single level near the model top.
 
 ### Differences from WeatherQuest
 
@@ -134,19 +155,20 @@ pipeline that produced the `wxquest_initial_conditions` artifact, and
 WeatherQuest `processing/preprocessing.jl` now calls these `process_*` functions
 rather than its own copies. The remaining differences are deliberate:
 
-  - The atmosphere state uses the 37 ERA5 pressure levels rather than the 137
-    model levels, so ClimaAtmos interpolates it in the vertical.
-
-  - The pressure levels are written from the surface up. CDS delivers them from
-    the top down, and WeatherQuest passes that order through, which makes the
-    vertical interpolation extrapolate the model top over the whole column.
+  - The model-level state takes one MARS request, not two. WeatherQuest asks
+    separately for `z` and `lnsp`, which are archived on level 1 alone, and
+    merges them in. They hold the same surface geopotential and surface
+    pressure that the single-level request already supplies as
+    `surface_geopotential` and `sp`, which is what `to_z_levels_3d_model`
+    reads, so the second request is dropped. Neither `crwc` nor `cswc` is
+    requested, matching `MODEL_LEVEL_PARAM_IDS_FULL`.
 
   - The files hold only the variables a consumer reads. Dropped, with the
     consumer checked in each case: `si` and `sie` from the land file, which
     ClimaLand derives from `swvl` and `stl`; `lai`, which ClimaLand takes from
     MODIS; `ISTL2` to `ISTL4`, since the prescribed sea ice model reads only
     `ISTL1`; and `fsr` and `flsr` from the albedo file. The raw atmosphere file
-    carries the pressure-level fields plus `skt`, `sp`, and
+    carries the model-level fields plus `skt`, `sp`, and
     `surface_geopotential`, rather than everything both downloads contain.
 
   - One single-level request covers the surface, ocean, and land fields, where
@@ -208,7 +230,7 @@ layer midpoints `[0.035, 0.175, 0.64, 1.945]`, and the output is always
 Float32. Both could become keywords later without a breaking release.
 
 `build_raw` is the exception to the shape above: it merges two source files, the
-pressure-level and single-level downloads, into the atmosphere state file.
+model-level and single-level downloads, into the atmosphere state file.
 
 ```@docs
 InitialConditions.ERA5.build_raw

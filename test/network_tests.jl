@@ -32,24 +32,19 @@ else
             ERA5.fetch_initial_conditions(DATE; dir)
             @test ERA5.files_complete(dir, DATE)
 
-            # The raw file meets the preconditions that ClimaAtmos asserts.
-            # `validate_dir` checks these, but assert them here too
+            # The raw file meets the preconditions that the model-level
+            # preprocessing asserts. `validate_dir` checks these, but assert
+            # them here too
             NCDatasets.NCDataset(joinpath(dir, ERA5.raw_filename(DATE))) do ds
-                for dim in ("longitude", "latitude", "pressure_level", "valid_time")
+                for dim in ("longitude", "latitude", "model_level", "valid_time")
                     @test haskey(ds.dim, dim)
                 end
-                for name in
-                    ("u", "v", "w", "t", "q", "z", "skt", "sp", "surface_geopotential")
+                for name in ("u", "v", "w", "t", "q", "skt", "sp", "surface_geopotential")
                     @test haskey(ds, name)
                 end
-                levels = Array(ds["pressure_level"])
-                @test length(levels) == 37
-                # Levels run from the surface up, so pressure decreases and the
-                # geopotential increases. ClimaAtmos interpolates in altitude
-                # and gives no warning when the order is wrong.
-                @test issorted(levels, rev = true)
-                z_column = Array(ds["z"])[1, 1, :, 1]
-                @test issorted(z_column)
+                # MARS can answer `1/to/137` with level 1 alone, and only a
+                # real request can tell us whether it did
+                @test Array(ds["model_level"]) == collect(1:137)
             end
 
             # The single-level fields landed on the grids the readers expect

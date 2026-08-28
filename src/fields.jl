@@ -147,13 +147,3 @@ function write_replicated_time_var!(ncout, name, field, ntimes; attrib)
     end
     return nothing
 end
-
-"""
-    permute_along(data, dim, perm)
-
-Reorder `data` along dimension `dim` with the permutation `perm`.
-"""
-function permute_along(data, dim, perm)
-    indices = ntuple(i -> i == dim ? perm : Colon(), ndims(data))
-    return data[indices...]
-end

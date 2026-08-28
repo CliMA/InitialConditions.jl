@@ -1,5 +1,5 @@
 """
-The name of the pressure-level atmosphere state file for `date`.
+The name of the model-level atmosphere state file for `date`.
 """
 raw_filename(date) = "era5_raw_$(datestamp(date))_0000.nc"
 

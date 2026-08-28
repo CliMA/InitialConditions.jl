@@ -1,40 +1,31 @@
 """
-    check_increasing_altitude(ds, filename)
+    check_model_levels(ds, filename)
 
-Check that the raw atmosphere file lists its levels from the surface up. The
-vertical interpolation in ClimaAtmos needs an increasing altitude coordinate,
-and it gives no warning when it gets a decreasing one.
+Check that the raw atmosphere file holds the whole 1 to 137 model-level column,
+in that order.
+
+MARS can answer a `1/to/137` request with level 1 alone, which WeatherQuest
+`download_model_level_data` warns about. The result is a plausible file that
+would initialize the model from a single level near the model top.
 """
-function check_increasing_altitude(ds, filename)
-    levels = Array(ds["pressure_level"])
-    issorted(levels; rev = true) || error(
-        "pressure_level in $filename is not in decreasing order. ClimaAtmos " *
-        "interpolates in altitude and needs the levels ordered from the " *
-        "surface up.",
-    )
-    length(levels) > 1 || return nothing
-    var = ds["z"]
-    dims = NCDatasets.dimnames(var)
-    level_dim = find_dim(dims, ("pressure_level",), "pressure level")
-    slice = k -> var[ntuple(i -> i == level_dim ? k : Colon(), length(dims))...]
-    all(slice(1) .< slice(length(levels))) || error(
-        "The geopotential in $filename does not grow with the level index, " *
-        "so ClimaAtmos would extrapolate over the whole column.",
+function check_model_levels(ds, filename)
+    levels = Array(ds["model_level"])
+    levels == collect(1:N_MODEL_LEVELS) || error(
+        "model_level in $filename holds $(length(levels)) levels running " *
+        "$(isempty(levels) ? "nothing" : "$(first(levels)) to $(last(levels))"), " *
+        "rather than the full 1 to $(N_MODEL_LEVELS). MARS can truncate a " *
+        "`1/to/$(N_MODEL_LEVELS)` request to its first level.",
     )
     return nothing
 end
 
 function validate_raw(ds, filename)
-    for dim in ("longitude", "latitude", "pressure_level", "valid_time")
+    for dim in ("longitude", "latitude", "model_level", "valid_time")
         haskey(ds.dim, dim) || error("Missing dimension $dim in $filename")
     end
     check_present(ds, ["w"], filename)
-    check_no_nan(
-        ds,
-        ["u", "v", "t", "q", "z", "skt", "sp", "surface_geopotential"],
-        filename,
-    )
-    check_increasing_altitude(ds, filename)
+    check_no_nan(ds, ["u", "v", "t", "q", "skt", "sp", "surface_geopotential"], filename)
+    check_model_levels(ds, filename)
     return nothing
 end
 

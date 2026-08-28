@@ -20,10 +20,9 @@ end
 """
     download_source_files(date, download_dir; retrieve_fn, wait)
 
-Submit the surface and pressure level CDS requests for `date` and download the
-results into `download_dir`. Returns a NamedTuple with the paths of the
-pressure-level and single-level NetCDF files. `retrieve_fn` has the signature of
-`CDSAPI.retrieve`.
+Submit the model-level and single-level CDS requests for `date` and download
+the results into `download_dir`. Returns a NamedTuple with the paths of the two
+NetCDF files. `retrieve_fn` has the signature of `CDSAPI.retrieve`.
 """
 function download_source_files(
     date,
@@ -32,7 +31,7 @@ function download_source_files(
     wait = 30.0,
 )
     specs = (
-        pressure = ("reanalysis-era5-pressure-levels", pressure_levels_request(date)),
+        model = ("reanalysis-era5-complete", model_levels_request(date)),
         surface = ("reanalysis-era5-single-levels", single_levels_request(date)),
     )
     paths = map(keys(specs)) do key

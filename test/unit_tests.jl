@@ -7,16 +7,15 @@ import InitialConditions.ERA5
 const TEST_DATE = Dates.DateTime(2024, 3, 15)
 const NLON = 8
 const NLAT = 5
-const NLEVELS = 3
+# The full ERA5 model-level column, because `check_model_levels` demands it
+const NLEVELS = 137
 
 # Longitudes as CDS delivers them for area [90, -180, -90, 180]
 const TEST_LON = collect(range(-180.0, 135.0, length = NLON))
 # Latitudes decreasing, as in ERA5 files
 const TEST_LAT = collect(range(90.0, -90.0, length = NLAT))
-# Pressure levels as CDS delivers them, in increasing order, with a matching
-# geopotential. Lower pressure sits higher up.
-const TEST_PRESSURE_LEVELS = [500.0, 850.0, 1000.0]
-const TEST_GEOPOTENTIAL = [5.4e4, 1.5e4, 1.0e3]
+# Model levels as CDS delivers them: 1 at the model top, 137 at the surface
+const TEST_MODEL_LEVELS = collect(1:NLEVELS)
 
 # The land mask for the fixtures: the first three longitudes are land
 is_land(i, j) = i <= 3
@@ -38,18 +37,6 @@ function define_fake_coords!(ds)
     NCDatasets.defVar(ds, "latitude", TEST_LAT, ("latitude",))
     NCDatasets.defVar(ds, "valid_time", [TEST_DATE], ("valid_time",))
     return nothing
-end
-
-"""
-The `(lon, lat, level, time)` geopotential of the fixtures: uniform in the
-horizontal, and growing with the level index.
-"""
-function test_geopotential()
-    z = Array{Float64}(undef, NLON, NLAT, NLEVELS, 1)
-    for k in 1:NLEVELS
-        z[:, :, k, 1] .= TEST_GEOPOTENTIAL[k]
-    end
-    return z
 end
 
 """
@@ -77,18 +64,19 @@ function fake_var_writer(ds, dims, expver)
 end
 
 """
-Write a fake CDS pressure-levels download. With `expver = true` it carries the
-extra `expver` dimension that CDS adds inside the ERA5T window.
+Write a fake CDS model-levels download. With `expver = true` it carries the
+extra `expver` dimension that CDS adds inside the ERA5T window. `levels`
+overrides the model-level coordinate, to stand in for a truncated MARS
+response.
 """
-function write_fake_pressure_file(path; expver = false)
+function write_fake_model_file(path; expver = false, levels = TEST_MODEL_LEVELS)
     NCDatasets.NCDataset(path, "c") do ds
         define_fake_coords!(ds)
-        NCDatasets.defDim(ds, "pressure_level", NLEVELS)
-        NCDatasets.defVar(ds, "pressure_level", TEST_PRESSURE_LEVELS, ("pressure_level",))
-        dims = ("longitude", "latitude", "pressure_level", "valid_time")
+        NCDatasets.defDim(ds, "model_level", length(levels))
+        NCDatasets.defVar(ds, "model_level", levels, ("model_level",))
+        dims = ("longitude", "latitude", "model_level", "valid_time")
         write_var! = fake_var_writer(ds, dims, expver)
 
-        write_var!("z", test_geopotential())
         for (name, value) in (
             ("t", 280.0),
             ("q", 0.005),
@@ -97,10 +85,8 @@ function write_fake_pressure_file(path; expver = false)
             ("w", 0.1),
             ("clwc", 1.0e-5),
             ("ciwc", 1.0e-6),
-            ("crwc", 1.0e-6),
-            ("cswc", 1.0e-6),
         )
-            write_var!(name, fill(value, NLON, NLAT, NLEVELS, 1))
+            write_var!(name, fill(value, NLON, NLAT, length(levels), 1))
         end
     end
     return path
@@ -152,8 +138,8 @@ network. Records the requests it receives.
 function make_fake_retrieve(recorded)
     return function (dataset, request, path; wait = 1.0)
         push!(recorded, (dataset, request))
-        if haskey(request, "pressure_level")
-            write_fake_pressure_file(path)
+        if haskey(request, "levelist")
+            write_fake_model_file(path)
         else
             write_fake_surface_file(path)
         end
@@ -193,14 +179,15 @@ end
 end
 
 @testset "requests" begin
-    request = ERA5.pressure_levels_request(TEST_DATE)
-    @test request["year"] == "2024"
-    @test request["month"] == "03"
-    @test request["day"] == "15"
+    # A MARS request, so `param`/`levelist` rather than `variable`
+    request = ERA5.model_levels_request(TEST_DATE)
+    @test request["date"] == "20240315"
+    @test request["time"] == "00"
+    @test request["levtype"] == "ml"
+    @test request["levelist"] == "1/to/137"
     @test request["data_format"] == "netcdf"
-    @test length(request["pressure_level"]) == 37
-    @test "temperature" in request["variable"]
-    @test "vertical_velocity" in request["variable"]
+    # t, u, v, q, w, clwc, ciwc
+    @test request["param"] == "130/131/132/133/135/246/247"
 
     surface = ERA5.single_levels_request(TEST_DATE)
     @test "sea_surface_temperature" in surface["variable"]
@@ -266,21 +253,16 @@ end
 
         # Raw file: dimensions and merged surface variables
         NCDatasets.NCDataset(joinpath(dir, ERA5.raw_filename(TEST_DATE))) do ds
-            for dim in ("longitude", "latitude", "pressure_level", "valid_time")
+            for dim in ("longitude", "latitude", "model_level", "valid_time")
                 @test haskey(ds.dim, dim)
             end
-            for name in ("u", "v", "w", "t", "q", "z", "skt", "sp", "surface_geopotential")
+            for name in ("u", "v", "w", "t", "q", "skt", "sp", "surface_geopotential")
                 @test haskey(ds, name)
             end
             @test size(Array(ds["t"])) == (NLON, NLAT, NLEVELS, 1)
             @test all(Array(ds["surface_geopotential"]) .== 100.0f0)
-            # Levels run from the surface up, so pressure decreases and the
-            # geopotential increases. ClimaAtmos interpolates in altitude and
-            # needs this order.
-            @test Array(ds["pressure_level"]) ≈ reverse(TEST_PRESSURE_LEVELS)
-            z_profile = Array(ds["z"])[1, 1, :, 1]
-            @test issorted(z_profile)
-            @test z_profile ≈ Float32.(reverse(TEST_GEOPOTENTIAL))
+            # The levels keep the order CDS delivers, 1 at the top
+            @test Array(ds["model_level"]) == TEST_MODEL_LEVELS
         end
 
         # SST: Celsius, land filled, rolled longitudes, 4 time points
@@ -365,30 +347,19 @@ end
     end
 end
 
-@testset "level order check" begin
+@testset "truncated MARS responses are caught" begin
     mktempdir() do dir
-        # A raw file with the levels ordered from the top down, which
-        # ClimaAtmos cannot interpolate
-        path = joinpath(dir, "reversed.nc")
-        NCDatasets.NCDataset(path, "c") do ds
-            define_fake_coords!(ds)
-            NCDatasets.defDim(ds, "pressure_level", NLEVELS)
-            NCDatasets.defVar(
-                ds,
-                "pressure_level",
-                TEST_PRESSURE_LEVELS,
-                ("pressure_level",),
-            )
-            NCDatasets.defVar(
-                ds,
-                "z",
-                test_geopotential(),
-                ("longitude", "latitude", "pressure_level", "valid_time"),
-            )
+        # MARS can answer `1/to/137` with level 1 alone. The file looks fine
+        # otherwise, so only the level coordinate gives it away.
+        for levels in ([1], collect(1:(NLEVELS - 1)))
+            path = write_fake_model_file(joinpath(dir, "truncated.nc"); levels)
+            NCDatasets.NCDataset(path) do ds
+                @test_throws Exception ERA5.check_model_levels(ds, path)
+            end
+            rm(path)
         end
-        NCDatasets.NCDataset(path) do ds
-            @test_throws Exception ERA5.check_increasing_altitude(ds, path)
-        end
+        full = write_fake_model_file(joinpath(dir, "full.nc"))
+        NCDatasets.NCDataset(ds -> ERA5.check_model_levels(ds, full), full)
     end
 end
 
@@ -448,8 +419,8 @@ end
     mktempdir() do dir
         source = joinpath(dir, "era5_single_levels.nc")
         write_fake_surface_file(source)
-        pressure = joinpath(dir, "era5_pressure_levels.nc")
-        write_fake_pressure_file(pressure)
+        model = joinpath(dir, "era5_model_levels.nc")
+        write_fake_model_file(model)
 
         singles = (
             (ERA5.process_sst, "sst.nc", "SST"),
@@ -466,7 +437,7 @@ end
         end
 
         raw = joinpath(dir, "raw.nc")
-        @test ERA5.build_raw(pressure, source, raw) == raw
+        @test ERA5.build_raw(model, source, raw) == raw
         @test isfile(raw)
     end
 end
@@ -501,9 +472,9 @@ end
     # an all-missing field, so every processor must take the last one.
     mktempdir() do dir
         surface = joinpath(dir, "surface_expver.nc")
-        pressure = joinpath(dir, "pressure_expver.nc")
+        model = joinpath(dir, "model_expver.nc")
         write_fake_surface_file(surface; expver = true)
-        write_fake_pressure_file(pressure; expver = true)
+        write_fake_model_file(model; expver = true)
         processed = (process, name) -> process(surface, joinpath(dir, name))
 
         NCDatasets.NCDataset(processed(ERA5.process_sst, "sst.nc")) do ds
@@ -527,7 +498,7 @@ end
 
         # `build_raw` drops the dimension rather than carrying it forward,
         # because ClimaAtmos indexes the raw file positionally
-        raw = ERA5.build_raw(pressure, surface, joinpath(dir, "raw.nc"))
+        raw = ERA5.build_raw(model, surface, joinpath(dir, "raw.nc"))
         NCDatasets.NCDataset(raw) do ds
             @test !haskey(ds.dim, "expver")
             @test !haskey(ds, "expver")
@@ -535,7 +506,7 @@ end
             @test all(Array(ds["t"]) .≈ 280.0f0)
             @test all(Array(ds["surface_geopotential"]) .== 100.0f0)
             # Decoded data carries no leftover encoding attributes
-            for name in ("t", "z", "skt", "sp", "surface_geopotential")
+            for name in ("t", "q", "skt", "sp", "surface_geopotential")
                 @test !haskey(ds[name].attrib, "_FillValue")
             end
         end

@@ -92,7 +92,7 @@ function download_and_cache(date, dir; force, retrieve_fn, wait)
     mktempdir(dir; prefix = TMPDIR_PREFIX) do tmpdir
         files = download_source_files(date, tmpdir; retrieve_fn, wait)
         @info "Preprocessing ERA5 initial conditions" date
-        build_raw(files.pressure, files.surface, joinpath(tmpdir, raw_filename(date)))
+        build_raw(files.model, files.surface, joinpath(tmpdir, raw_filename(date)))
         process_sst(files.surface, joinpath(tmpdir, sst_filename(date)); date)
         process_sic(files.surface, joinpath(tmpdir, sic_filename(date)); date)
         process_land(files.surface, joinpath(tmpdir, land_filename(date)))

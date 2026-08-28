@@ -13,7 +13,7 @@ writes the NetCDF files that ClimaCoupler, ClimaAtmos, and ClimaLand read:
 
 | File                                     | Contents                           |
 |:---------------------------------------- |:---------------------------------- |
-| `era5_raw_YYYYMMDD_0000.nc`              | pressure-level atmosphere state    |
+| `era5_raw_YYYYMMDD_0000.nc`              | model-level atmosphere state       |
 | `sst_processed_YYYYMMDD_0000.nc`         | sea surface temperature, Celsius   |
 | `sic_processed_YYYYMMDD_0000.nc`         | sea ice concentration, percent     |
 | `era5_land_processed_YYYYMMDD_0000.nc`   | integrated land initial conditions |
@@ -52,9 +52,13 @@ The requests and the processing are ported from the private
 builds the `wxquest_initial_conditions` artifact. Ported functions name their
 WeatherQuest source in their docstring, and WeatherQuest
 `processing/preprocessing.jl` now calls the `process_*` functions here rather
-than its own copies. The differences that remain are deliberate: the atmosphere
-state uses the 37 ERA5 pressure levels rather than the 137 model levels, so
-ClimaAtmos interpolates it in the vertical; the levels are written from the
-surface up rather than in the order CDS delivers them; and the files hold only
-the variables that a consumer reads. The
+than its own copies. The differences that remain are deliberate: the
+model-level state takes one MARS request rather than two, and the files hold
+only the variables that a consumer reads. The
 [documentation](https://clima.github.io/InitialConditions.jl/dev/) lists them.
+
+The atmosphere state is on the 137 native model levels, from the
+`reanalysis-era5-complete` MARS archive, which has a licence of its own to
+accept. Run WeatherQuest `processing/preprocessing.jl --groups atmos` over the
+cache to turn it into the `era5_init_processed_internal_*.nc` that ClimaAtmos
+reads; ClimaAtmos cannot read the raw file on its own.
