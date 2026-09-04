@@ -114,16 +114,19 @@ breaks after a timeout.
 
 ### Output files
 
-For a start date `YYYYMMDD`, the package writes these files:
+For a start time `YYYYMMDD_HHMM`, the package writes these files. ERA5 is
+archived hourly, so the start time has to land on the hour; `00:00` is the
+usual one and the only one the ClimaCoupler and ClimaAtmos path lookups accept
+today.
 
 | File                                     | Holds                                                                                                          | Read by                                   |
 |:---------------------------------------- |:-------------------------------------------------------------------------------------------------------------- |:----------------------------------------- |
-| `era5_raw_YYYYMMDD_0000.nc`              | `u`, `v`, `w`, `t`, `q`, `clwc`, `ciwc` on the 137 ERA5 model levels, plus `skt`, `sp`, `surface_geopotential` | WeatherQuest `to_z_levels_3d_model`       |
-| `sst_processed_YYYYMMDD_0000.nc`         | `SST` in Celsius, land filled by nearest neighbor                                                              | prescribed ocean                          |
-| `sic_processed_YYYYMMDD_0000.nc`         | `SEAICE` in percent, and `ISTL1` in Kelvin                                                                     | prescribed sea ice                        |
-| `era5_land_processed_YYYYMMDD_0000.nc`   | `skt`, `tsn`, `swe`, `swvl`, `stl`, with 0 over ocean                                                          | ClimaLand integrated land                 |
-| `era5_bucket_processed_YYYYMMDD_0000.nc` | `W`, `Ws`, `S`, `T`, `tsn`, `skt`                                                                              | bucket land                               |
-| `albedo_processed_YYYYMMDD_0000.nc`      | `sw_alb_clr`, the ERA5 forecast albedo                                                                         | bucket, when `bucket_albedo_type: "era5"` |
+| `era5_raw_YYYYMMDD_HHMM.nc`              | `u`, `v`, `w`, `t`, `q`, `clwc`, `ciwc` on the 137 ERA5 model levels, plus `skt`, `sp`, `surface_geopotential` | WeatherQuest `to_z_levels_3d_model`       |
+| `sst_processed_YYYYMMDD_HHMM.nc`         | `SST` in Celsius, land filled by nearest neighbor                                                              | prescribed ocean                          |
+| `sic_processed_YYYYMMDD_HHMM.nc`         | `SEAICE` in percent, and `ISTL1` in Kelvin                                                                     | prescribed sea ice                        |
+| `era5_land_processed_YYYYMMDD_HHMM.nc`   | `skt`, `tsn`, `swe`, `swvl`, `stl`, with 0 over ocean                                                          | ClimaLand integrated land                 |
+| `era5_bucket_processed_YYYYMMDD_HHMM.nc` | `W`, `Ws`, `S`, `T`, `tsn`, `skt`                                                                              | bucket land                               |
+| `albedo_processed_YYYYMMDD_HHMM.nc`      | `sw_alb_clr`, the ERA5 forecast albedo                                                                         | bucket, when `bucket_albedo_type: "era5"` |
 
 The atmosphere state comes from `reanalysis-era5-complete`, the MARS archive,
 on the 137 native model levels. Levels keep the order MARS delivers them, level
@@ -142,6 +145,16 @@ coefficients, which `read_hybrid_coeffs` takes from its bundled
 ClimaAtmos cannot read the raw file on its own. `weather_model_data_path` falls
 back to `to_z_levels_1d` when no processed file is present, and that fallback
 asserts a `pressure_level` dimension, so WeatherQuest has to run in between.
+
+!!! note "The atmosphere stops one step short"
+
+    Every other output here is the file a component model reads. The
+    atmosphere is not: it stops at `era5_raw_*.nc`, one step before the
+    `era5_init_processed_internal_*.nc` that ClimaAtmos opens. Closing the gap
+    means porting `to_z_levels_3d_model`, which reconstructs pressure from the
+    IFS hybrid coefficients, integrates geopotential hydrostatically, and
+    interpolates each column onto the target grid. That is a much larger job
+    than the rest of the processing here, so it is left for a follow-up.
 
 MARS can answer a `1/to/137` request with level 1 alone.
 [`validate_dir`](@ref InitialConditions.ERA5.validate_dir) rejects that, because
@@ -186,19 +199,20 @@ The default test suite replaces `CDSAPI.retrieve` with a fake that writes small
 fixture files, so it makes no network requests and runs in seconds:
 
 ```
-julia --project=test test/runtests.jl
+julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-To exercise the real CDS path, which needs credentials and can queue for hours:
+The network tests skip themselves unless you ask for them. They need CDS
+credentials, and a CDS request can queue for hours:
 
 ```
-ERA5_NETWORK_TESTS=true julia --project=test test/network_tests.jl
+ERA5_NETWORK_TESTS=true julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-That test downloads a date, processes and validates it, checks the cache hit on
-a second call, and asserts the preconditions ClimaAtmos relies on. Real CDS
-output is the only thing that can break those, for example if CDS changes its
-dimension names or its level order.
+They download a date, process and validate it, check the cache hit on a second
+call, and assert the preconditions the model-level preprocessing relies on.
+Real CDS output is the only thing that can break those, for example if CDS
+changes its dimension names or its level order.
 
 ## API
 

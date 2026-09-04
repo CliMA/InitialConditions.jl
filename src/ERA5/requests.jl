@@ -97,7 +97,7 @@ function base_request(date)
         "year" => Dates.format(date, "yyyy"),
         "month" => Dates.format(date, "mm"),
         "day" => Dates.format(date, "dd"),
-        "time" => "00:00",
+        "time" => Dates.format(date, "HH:MM"),
         "area" => [90, -180, -90, 180],
         "data_format" => "netcdf",
     )

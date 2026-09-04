@@ -34,8 +34,10 @@ does not have them.
 
 # Arguments
 
-  - `start_date`: the simulation start date. The file names use its day at
-    00:00 UTC.
+  - `start_date`: the simulation start time, a `Date` or a `DateTime`. ERA5 is
+    archived hourly, so it has to land on the hour. The file names stamp it as
+    `YYYYMMDD_HHMM`, so `DateTime(2010, 1, 1)` gives `..._20100101_0000.nc` and
+    `DateTime(2010, 1, 1, 6)` gives `..._20100101_0600.nc`.
   - `dir`: the cache directory, [`cache_dir`](@ref) by default.
   - `force`: delete the cached files for this date and fetch them again.
   - `retrieve_fn`: the retrieval function, `CDSAPI.retrieve` by default. Tests
@@ -58,7 +60,11 @@ function fetch_initial_conditions(
     retrieve_fn = CDSAPI.retrieve,
     wait = 30.0,
 )
-    date = Dates.DateTime(Dates.Date(start_date))
+    date = Dates.DateTime(start_date)
+    date == Dates.floor(date, Dates.Hour) || error(
+        "ERA5 is archived hourly, so start_date has to land on the hour, got " *
+        "$(start_date)",
+    )
     mkpath(dir)
     if !force && files_complete(dir, date)
         @info "Using cached ERA5 initial conditions" dir date
@@ -67,11 +73,49 @@ function fetch_initial_conditions(
     # One writer per cache and date: concurrent fetches wait here, then find
     # the finished files and skip the download. The holder refreshes the lock
     # file while alive, and a lock left by a killed process goes stale after
-    # `stale_age` seconds.
-    Pidfile.mkpidlock(joinpath(dir, lock_filename(date)); stale_age = 600.0) do
+    # `LOCK_STALE_AGE` seconds.
+    Pidfile.mkpidlock(joinpath(dir, lock_filename(date)); stale_age = LOCK_STALE_AGE) do
         download_and_cache(date, dir; force, retrieve_fn, wait)
     end
     return dir
+end
+
+"""
+    cleanup_tmpdirs(dir, date)
+
+Remove the download directories under `dir` that no fetch is using, left behind
+by killed fetches.
+
+The ones for `date` go unconditionally, because the caller holds that date's
+lock and so is the only process that could have a live one. The ones for
+another date go only if that date's lock is free, which means no fetch is
+running for it.
+
+Age is not a safe test in its place. A directory waiting on a CDS queue keeps
+the modification time it was created with, since nothing writes into it until
+the download lands, so a queue longer than the cutoff would make a live
+directory look abandoned.
+"""
+function cleanup_tmpdirs(dir, date)
+    own = tmpdir_prefix(date)
+    for name in readdir(dir)
+        path = joinpath(dir, name)
+        (startswith(name, TMPDIR_PREFIX) && isdir(path)) || continue
+        if startswith(name, own)
+            rm(path; recursive = true)
+            continue
+        end
+        other = tmpdir_date(name)
+        isnothing(other) && continue
+        # Returns false without waiting when a fetch for `other` holds the lock
+        Pidfile.trymkpidlock(
+            joinpath(dir, lock_filename(other));
+            stale_age = LOCK_STALE_AGE,
+        ) do
+            rm(path; recursive = true)
+        end
+    end
+    return nothing
 end
 
 """
@@ -88,8 +132,8 @@ function download_and_cache(date, dir; force, retrieve_fn, wait)
     end
     # A fake retrieve_fn needs no credentials
     retrieve_fn === CDSAPI.retrieve && assert_credentials()
-    IC.cleanup_stale_tmpdirs(dir, TMPDIR_PREFIX)
-    mktempdir(dir; prefix = TMPDIR_PREFIX) do tmpdir
+    cleanup_tmpdirs(dir, date)
+    mktempdir(dir; prefix = tmpdir_prefix(date)) do tmpdir
         files = download_source_files(date, tmpdir; retrieve_fn, wait)
         @info "Preprocessing ERA5 initial conditions" date
         build_raw(files.model, files.surface, joinpath(tmpdir, raw_filename(date)))

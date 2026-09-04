@@ -21,27 +21,10 @@ not create it, because the fetch does that.
 cache_dir(source::AbstractString) = joinpath(cache_root(), source)
 
 """
-    datestamp(date)
+    datetimestamp(date)
 
-A date as `YYYYMMDD`, the stamp that initial condition file names use.
+A date as `YYYYMMDD_HHMM`, the stamp that initial condition file names use.
+The same format as the WeatherQuest `DATETIME_FMT`.
 """
-datestamp(date::Dates.DateTime) = Dates.format(date, Dates.dateformat"yyyymmdd")
-
-"""
-    cleanup_stale_tmpdirs(dir, prefix; max_age_seconds = 86400)
-
-Remove the download directories under `dir` whose names start with `prefix`,
-left behind by a killed fetch. Only removes directories older than
-`max_age_seconds`. A per-date lock stops concurrent fetches for the same date,
-but a fetch for another date can run at the same time, and the age guard keeps
-its live download directory safe.
-"""
-function cleanup_stale_tmpdirs(dir, prefix; max_age_seconds = 86400)
-    for name in readdir(dir)
-        path = joinpath(dir, name)
-        (startswith(name, prefix) && isdir(path)) || continue
-        (time() - mtime(path)) > max_age_seconds || continue
-        rm(path; recursive = true)
-    end
-    return nothing
-end
+datetimestamp(date::Dates.DateTime) =
+    Dates.format(date, Dates.dateformat"yyyymmdd_HHMM")

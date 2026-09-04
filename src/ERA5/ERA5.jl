@@ -31,7 +31,7 @@ using ..InitialConditions:
     check_no_nan,
     check_present,
     clean_attributes,
-    datestamp,
+    datetimestamp,
     define_lonlat_time!,
     drop_expver,
     monthly_time_points,

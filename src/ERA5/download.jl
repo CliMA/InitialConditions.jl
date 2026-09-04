@@ -36,7 +36,7 @@ function download_source_files(
     )
     paths = map(keys(specs)) do key
         (dataset, request) = specs[key]
-        path = joinpath(download_dir, "cds_$(key)_$(datestamp(date)).nc")
+        path = joinpath(download_dir, "cds_$(key)_$(datetimestamp(date)).nc")
         @info "Requesting ERA5 data from CDS (this can queue for a while)" dataset date group =
             key
         retrieve_fn(dataset, request, path; wait)

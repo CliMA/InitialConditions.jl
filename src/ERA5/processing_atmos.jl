@@ -1,11 +1,10 @@
 """
     build_raw(model_path, surface_path, output_path)
 
-Build the raw atmosphere file that the model-level preprocessing reads. It
-holds the model-level variables, the single-level `skt` and `sp`, and the
-single-level geopotential renamed to `surface_geopotential`. Port of
-`combine_era5_datasets` in WeatherQuest `get_initial_conditions.py`, including
-the geopotential rename.
+Build the raw atmosphere file. It holds the model-level variables, the
+single-level `skt` and `sp`, and the single-level geopotential renamed to
+`surface_geopotential`. Port of `combine_era5_datasets` in WeatherQuest
+`get_initial_conditions.py`, including the geopotential rename.
 
 Keep the dimension names `longitude`, `latitude`, `model_level`, and
 `valid_time`, because WeatherQuest `to_z_levels_3d_model` asserts them. An
@@ -18,6 +17,15 @@ level 137 at the surface. `to_z_levels_3d_model` reads that order off the
 `model_level` coordinate and flips it itself, and the hybrid coefficients that
 turn the levels into pressures are indexed by level number, so reordering here
 would only desynchronize them.
+
+!!! note "One step short of ClimaAtmos"
+
+    Every other output of this package is the file its component model reads.
+    The atmosphere is not: this file still needs WeatherQuest
+    `to_z_levels_3d_model` to become the `era5_init_processed_internal_*.nc`
+    that ClimaAtmos opens. TODO: port that step, which reconstructs pressure
+    from the IFS hybrid coefficients, integrates geopotential hydrostatically,
+    and interpolates each column onto the target grid.
 """
 function build_raw(model_path, surface_path, output_path)
     NCDatasets.NCDataset(output_path, "c") do ncout

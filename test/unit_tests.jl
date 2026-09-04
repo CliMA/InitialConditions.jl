@@ -1,5 +1,6 @@
 import Test: @test, @testset, @test_throws
 import Dates
+import FileWatching.Pidfile
 import NCDatasets
 import InitialConditions as IC
 import InitialConditions.ERA5
@@ -155,6 +156,68 @@ end
     @test ERA5.bucket_filename(TEST_DATE) == "era5_bucket_processed_20240315_0000.nc"
     @test ERA5.albedo_filename(TEST_DATE) == "albedo_processed_20240315_0000.nc"
     @test length(ERA5.output_filenames(TEST_DATE)) == 6
+
+    # Times other than 00Z get their own names, so one cache can hold several
+    # hours of the same day
+    six_z = Dates.DateTime(2024, 3, 15, 6)
+    @test ERA5.raw_filename(six_z) == "era5_raw_20240315_0600.nc"
+    @test ERA5.sst_filename(six_z) == "sst_processed_20240315_0600.nc"
+    @test ERA5.lock_filename(six_z) != ERA5.lock_filename(TEST_DATE)
+    @test isdisjoint(ERA5.output_filenames(six_z), ERA5.output_filenames(TEST_DATE))
+
+    # The download directory of one hour is not a prefix match for another
+    @test ERA5.tmpdir_prefix(six_z) != ERA5.tmpdir_prefix(TEST_DATE)
+    @test !startswith(ERA5.tmpdir_prefix(six_z), ERA5.tmpdir_prefix(TEST_DATE))
+end
+
+@testset "cleanup spares the download directory of a live fetch" begin
+    # A CDS request can queue for longer than a day, and nothing writes into
+    # its download directory while it waits, so the directory keeps the
+    # modification time it was created with. Age alone would mark it abandoned.
+    mktempdir() do dir
+        queued = Dates.DateTime(2024, 3, 16)
+        abandoned = Dates.DateTime(2024, 3, 17)
+        own = mkdir(joinpath(dir, ERA5.tmpdir_prefix(TEST_DATE) * "own"))
+        live = mkdir(joinpath(dir, ERA5.tmpdir_prefix(queued) * "live"))
+        orphan = mkdir(joinpath(dir, ERA5.tmpdir_prefix(abandoned) * "orphan"))
+        unrelated = mkdir(joinpath(dir, "not_a_download"))
+
+        # Stand in for a fetch of `queued` that is waiting on the CDS queue
+        lock = joinpath(dir, ERA5.lock_filename(queued))
+        Pidfile.mkpidlock(lock; stale_age = 600.0) do
+            ERA5.cleanup_tmpdirs(dir, TEST_DATE)
+        end
+
+        # Ours goes: we hold this date's lock, so nothing else can be using it
+        @test !isdir(own)
+        # The queued fetch holds its own lock, so its directory is off limits
+        @test isdir(live)
+        # No fetch holds this one, so it is a leftover and gets collected
+        @test !isdir(orphan)
+        @test isdir(unrelated)
+        # The locks taken to test the other dates are released again
+        @test !any(endswith(".lock"), readdir(dir))
+    end
+end
+
+@testset "tmpdir_date reads the date back out" begin
+    @test ERA5.tmpdir_date(ERA5.tmpdir_prefix(TEST_DATE) * "abc") == TEST_DATE
+    six_z = Dates.DateTime(2024, 3, 15, 6)
+    @test ERA5.tmpdir_date(ERA5.tmpdir_prefix(six_z) * "abc") == six_z
+    @test isnothing(ERA5.tmpdir_date("tmp_era5_nonsense"))
+    @test isnothing(ERA5.tmpdir_date("not_a_download"))
+end
+
+@testset "start times off the hour are rejected" begin
+    mktempdir() do dir
+        # ERA5 is archived hourly
+        @test_throws Exception ERA5.fetch_initial_conditions(
+            Dates.DateTime(2024, 3, 15, 6, 30);
+            dir,
+            retrieve_fn = make_fake_retrieve([]),
+        )
+        @test isempty(readdir(dir))
+    end
 end
 
 @testset "field helpers" begin
@@ -229,7 +292,7 @@ end
             @test isfile(joinpath(dir, name))
         end
         # No temporary directories are left behind
-        @test !any(startswith("tmp_era5_"), readdir(dir))
+        @test !any(startswith(ERA5.tmpdir_prefix(TEST_DATE)), readdir(dir))
 
         # Validation passes on the complete cache
         ERA5.validate_dir(dir, TEST_DATE)

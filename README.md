@@ -13,12 +13,12 @@ writes the NetCDF files that ClimaCoupler, ClimaAtmos, and ClimaLand read:
 
 | File                                     | Contents                           |
 |:---------------------------------------- |:---------------------------------- |
-| `era5_raw_YYYYMMDD_0000.nc`              | model-level atmosphere state       |
-| `sst_processed_YYYYMMDD_0000.nc`         | sea surface temperature, Celsius   |
-| `sic_processed_YYYYMMDD_0000.nc`         | sea ice concentration, percent     |
-| `era5_land_processed_YYYYMMDD_0000.nc`   | integrated land initial conditions |
-| `era5_bucket_processed_YYYYMMDD_0000.nc` | bucket land initial conditions     |
-| `albedo_processed_YYYYMMDD_0000.nc`      | surface albedo                     |
+| `era5_raw_YYYYMMDD_HHMM.nc`              | model-level atmosphere state       |
+| `sst_processed_YYYYMMDD_HHMM.nc`         | sea surface temperature, Celsius   |
+| `sic_processed_YYYYMMDD_HHMM.nc`         | sea ice concentration, percent     |
+| `era5_land_processed_YYYYMMDD_HHMM.nc`   | integrated land initial conditions |
+| `era5_bucket_processed_YYYYMMDD_HHMM.nc` | bucket land initial conditions     |
+| `albedo_processed_YYYYMMDD_HHMM.nc`      | surface albedo                     |
 
 ## Usage
 
