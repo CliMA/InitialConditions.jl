@@ -13,10 +13,17 @@ and these 3D variables on the negative depth coordinate `z`:
   - `stl`, the soil temperature in Kelvin
 
 These are the variables that the ClimaLand subseasonal reader takes from this
-file. The latitude axis increases. Ocean points are 0 in the masked fields,
-because the ClimaLand reader masks with `> 0`. Port of `interpolate_land` in
-WeatherQuest `interpolate.jl`, without the ice fraction and internal energy,
-which ClimaLand derives itself.
+file. The latitude axis increases. Port of `interpolate_land` in WeatherQuest
+`interpolate.jl`, without the ice fraction and internal energy, which ClimaLand
+derives itself.
+
+The soil and snow fields carry real values over ocean, not zeros.
+`reanalysis-era5-single-levels` leaves `swvl`, `stl`, `sd`, and `tsn` defined
+everywhere, and over sea points `stl` tracks the surface temperature: at
+0N, 150W it reads about 302 K. The `zero_fill` on `swvl` and `swe` is there for
+a source that does mask them, such as ERA5-Land, and is a no-op on this one.
+Any land mask a consumer needs has to come from somewhere else, because these
+fields do not carry one.
 """
 function process_land(source_path, output_path)
     NCDatasets.NCDataset(source_path) do ncin
@@ -52,12 +59,13 @@ function process_land(source_path, output_path)
                     ncout,
                     name,
                     Float32,
-                    ("lon", "lat", "z"),
+                    ("lon", "lat", "z");
                     attrib = Dict(
                         "units" => units,
                         "longname" => long_name,
                         "varname" => name,
                     ),
+                    COMPRESSION...,
                 )
                 var[:, :, :] = soil_layers_to_z(field)
             end
@@ -71,12 +79,13 @@ function process_land(source_path, output_path)
                     ncout,
                     name,
                     Float32,
-                    ("lon", "lat"),
+                    ("lon", "lat");
                     attrib = Dict(
                         "units" => units,
                         "longname" => long_name,
                         "varname" => name,
                     ),
+                    COMPRESSION...,
                 )
                 var[:, :] = field
             end
@@ -122,8 +131,12 @@ function process_bucket(source_path, output_path; subsurface_water_z_max = 0.5)
         Ws = zero_fill(read_surface_field(ncin, "src"))
         S = zero_fill(read_surface_field(ncin, "sd"))
 
-        # Fill the soil temperature over ocean, so the bucket has a value
-        # everywhere. Zeros mark masked points in the source data.
+        # Treat a zero as a masked point and fill it from the nearest valid
+        # cell, so the bucket has a plausible temperature everywhere. Port of
+        # the `stl_filled[stl_filled .== 0] .= NaN` step in WeatherQuest
+        # `interpolate_bucket`. It does nothing for a single-levels download,
+        # which defines `stl` over ocean too, and guards a source that masks
+        # with zeros instead.
         T_layers = map(1:nlayers) do k
             field = read_surface_field(ncin, "stl$k")
             with_nan = Union{Missing, Float64}[
@@ -146,12 +159,13 @@ function process_bucket(source_path, output_path; subsurface_water_z_max = 0.5)
                 ncout,
                 "T",
                 Float32,
-                ("lon", "lat", "z"),
+                ("lon", "lat", "z");
                 attrib = Dict(
                     "units" => "K",
                     "longname" => "Soil temperature profile",
                     "varname" => "T",
                 ),
+                COMPRESSION...,
             )
             T_var[:, :, :] = soil_layers_to_z(T)
 
@@ -166,12 +180,13 @@ function process_bucket(source_path, output_path; subsurface_water_z_max = 0.5)
                     ncout,
                     name,
                     Float32,
-                    ("lon", "lat"),
+                    ("lon", "lat");
                     attrib = Dict(
                         "units" => units,
                         "longname" => long_name,
                         "varname" => name,
                     ),
+                    COMPRESSION...,
                 )
                 var[:, :] = field
             end

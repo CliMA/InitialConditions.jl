@@ -141,7 +141,14 @@ Define the `(lon, lat, time)` variable `name` and write `field` to every time
 slice.
 """
 function write_replicated_time_var!(ncout, name, field, ntimes; attrib)
-    var = NCDatasets.defVar(ncout, name, Float32, ("lon", "lat", "time"), attrib = attrib)
+    var = NCDatasets.defVar(
+        ncout,
+        name,
+        Float32,
+        ("lon", "lat", "time");
+        attrib = attrib,
+        COMPRESSION...,
+    )
     for t in 1:ntimes
         var[:, :, t] = field
     end

@@ -39,7 +39,7 @@ else
                 for dim in ("longitude", "latitude", "model_level", "valid_time")
                     @test haskey(ds.dim, dim)
                 end
-                for name in ("u", "v", "w", "t", "q", "skt", "sp", "surface_geopotential")
+                for name in ("u", "v", "t", "q", "skt", "sp", "surface_geopotential")
                     @test haskey(ds, name)
                 end
                 # MARS can answer `1/to/137` with level 1 alone, and only a

@@ -49,7 +49,14 @@ function build_raw(model_path, surface_path, output_path)
                     # A plain Float32 array, so NCDatasets adds no _FillValue
                     data = Float32.(coalesce.(data, NaN))
                 end
-                NCDatasets.defVar(ncout, name, data, dims; attrib = attrib)
+                NCDatasets.defVar(
+                    ncout,
+                    name,
+                    data,
+                    dims;
+                    attrib = attrib,
+                    COMPRESSION...,
+                )
             end
         end
         NCDatasets.NCDataset(surface_path) do ncs
@@ -66,7 +73,14 @@ function build_raw(model_path, surface_path, output_path)
                 data = Float32.(coalesce.(data, NaN))
                 attrib = clean_attributes(var)
                 attrib["varname"] = dst_name
-                NCDatasets.defVar(ncout, dst_name, data, dims; attrib = attrib)
+                NCDatasets.defVar(
+                    ncout,
+                    dst_name,
+                    data,
+                    dims;
+                    attrib = attrib,
+                    COMPRESSION...,
+                )
             end
         end
     end

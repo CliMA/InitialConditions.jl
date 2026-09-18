@@ -27,6 +27,7 @@ import NCDatasets
 
 import ..InitialConditions as IC
 using ..InitialConditions:
+    COMPRESSION,
     EXPVER_DIM_NAMES,
     check_no_nan,
     check_present,

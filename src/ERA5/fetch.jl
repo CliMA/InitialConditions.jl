@@ -43,6 +43,8 @@ does not have them.
   - `retrieve_fn`: the retrieval function, `CDSAPI.retrieve` by default. Tests
     replace it with a fake.
   - `wait`: the seconds between CDS job status checks.
+  - `attempts`: how many times to try each transfer. CDS drops a large
+    transfer part way through often enough that one attempt is not enough.
 
 The download goes to a temporary directory inside `dir`, and the files only
 move into place after validation. An interrupted fetch leaves no partial
@@ -59,6 +61,7 @@ function fetch_initial_conditions(
     force = false,
     retrieve_fn = CDSAPI.retrieve,
     wait = 30.0,
+    attempts = DOWNLOAD_ATTEMPTS,
 )
     date = Dates.DateTime(start_date)
     date == Dates.floor(date, Dates.Hour) || error(
@@ -75,7 +78,7 @@ function fetch_initial_conditions(
     # file while alive, and a lock left by a killed process goes stale after
     # `LOCK_STALE_AGE` seconds.
     Pidfile.mkpidlock(joinpath(dir, lock_filename(date)); stale_age = LOCK_STALE_AGE) do
-        download_and_cache(date, dir; force, retrieve_fn, wait)
+        download_and_cache(date, dir; force, retrieve_fn, wait, attempts)
     end
     return dir
 end
@@ -124,7 +127,14 @@ end
 Download, process, validate, and move the files for `date` into the cache at
 `dir`. Call this only while holding the per-date lock.
 """
-function download_and_cache(date, dir; force, retrieve_fn, wait)
+function download_and_cache(
+    date,
+    dir;
+    force,
+    retrieve_fn,
+    wait,
+    attempts = DOWNLOAD_ATTEMPTS,
+)
     force && remove_cached_files(dir, date)
     if files_complete(dir, date)
         @info "Using cached ERA5 initial conditions" dir date
@@ -134,7 +144,7 @@ function download_and_cache(date, dir; force, retrieve_fn, wait)
     retrieve_fn === CDSAPI.retrieve && assert_credentials()
     cleanup_tmpdirs(dir, date)
     mktempdir(dir; prefix = tmpdir_prefix(date)) do tmpdir
-        files = download_source_files(date, tmpdir; retrieve_fn, wait)
+        files = download_source_files(date, tmpdir; retrieve_fn, wait, attempts)
         @info "Preprocessing ERA5 initial conditions" date
         build_raw(files.model, files.surface, joinpath(tmpdir, raw_filename(date)))
         process_sst(files.surface, joinpath(tmpdir, sst_filename(date)); date)

@@ -119,14 +119,14 @@ archived hourly, so the start time has to land on the hour; `00:00` is the
 usual one and the only one the ClimaCoupler and ClimaAtmos path lookups accept
 today.
 
-| File                                     | Holds                                                                                                          | Read by                                   |
-|:---------------------------------------- |:-------------------------------------------------------------------------------------------------------------- |:----------------------------------------- |
-| `era5_raw_YYYYMMDD_HHMM.nc`              | `u`, `v`, `w`, `t`, `q`, `clwc`, `ciwc` on the 137 ERA5 model levels, plus `skt`, `sp`, `surface_geopotential` | WeatherQuest `to_z_levels_3d_model`       |
-| `sst_processed_YYYYMMDD_HHMM.nc`         | `SST` in Celsius, land filled by nearest neighbor                                                              | prescribed ocean                          |
-| `sic_processed_YYYYMMDD_HHMM.nc`         | `SEAICE` in percent, and `ISTL1` in Kelvin                                                                     | prescribed sea ice                        |
-| `era5_land_processed_YYYYMMDD_HHMM.nc`   | `skt`, `tsn`, `swe`, `swvl`, `stl`, with 0 over ocean                                                          | ClimaLand integrated land                 |
-| `era5_bucket_processed_YYYYMMDD_HHMM.nc` | `W`, `Ws`, `S`, `T`, `tsn`, `skt`                                                                              | bucket land                               |
-| `albedo_processed_YYYYMMDD_HHMM.nc`      | `sw_alb_clr`, the ERA5 forecast albedo                                                                         | bucket, when `bucket_albedo_type: "era5"` |
+| File                                     | Holds                                                                                                     | Read by                                   |
+|:---------------------------------------- |:--------------------------------------------------------------------------------------------------------- |:----------------------------------------- |
+| `era5_raw_YYYYMMDD_HHMM.nc`              | `u`, `v`, `t`, `q`, `clwc`, `ciwc` on the 137 ERA5 model levels, plus `skt`, `sp`, `surface_geopotential` | WeatherQuest `to_z_levels_3d_model`       |
+| `sst_processed_YYYYMMDD_HHMM.nc`         | `SST` in Celsius, land filled by nearest neighbor                                                         | prescribed ocean                          |
+| `sic_processed_YYYYMMDD_HHMM.nc`         | `SEAICE` in percent, and `ISTL1` in Kelvin                                                                | prescribed sea ice                        |
+| `era5_land_processed_YYYYMMDD_HHMM.nc`   | `skt`, `tsn`, `swe`, `swvl`, `stl`                                                                        | ClimaLand integrated land                 |
+| `era5_bucket_processed_YYYYMMDD_HHMM.nc` | `W`, `Ws`, `S`, `T`, `tsn`, `skt`                                                                         | bucket land                               |
+| `albedo_processed_YYYYMMDD_HHMM.nc`      | `sw_alb_clr`, the ERA5 forecast albedo                                                                    | bucket, when `bucket_albedo_type: "era5"` |
 
 The atmosphere state comes from `reanalysis-era5-complete`, the MARS archive,
 on the 137 native model levels. Levels keep the order MARS delivers them, level
@@ -164,9 +164,10 @@ from a single level near the model top.
 ### Differences from WeatherQuest
 
 The processing follows the [WeatherQuest](https://github.com/CliMA/WeatherQuest)
-pipeline that produced the `wxquest_initial_conditions` artifact, and
-WeatherQuest `processing/preprocessing.jl` now calls these `process_*` functions
-rather than its own copies. The remaining differences are deliberate:
+pipeline that produced the `wxquest_initial_conditions` artifact. WeatherQuest
+`processing/preprocessing.jl` still runs its own copies on `main`; the branch
+that has it call these `process_*` functions instead is not merged yet. The
+differences below are deliberate:
 
   - The model-level state takes one MARS request, not two. WeatherQuest asks
     separately for `z` and `lnsp`, which are archived on level 1 alone, and
@@ -175,6 +176,20 @@ rather than its own copies. The remaining differences are deliberate:
     `surface_geopotential` and `sp`, which is what `to_z_levels_3d_model`
     reads, so the second request is dropped. Neither `crwc` nor `cswc` is
     requested, matching `MODEL_LEVEL_PARAM_IDS_FULL`.
+
+  - Vertical velocity, MARS parameter `135`, is not requested, so `w` is not in
+    the raw file and the atmosphere starts from `w = 0`. ERA5 archives it as
+    the pressure velocity in Pa/s from a hydrostatic model, which is not the
+    vertical velocity a nonhydrostatic model wants, and every initial
+    condition in `wxquest_initial_conditions` starts from `w = 0` for the same
+    reason: the raw files behind them hold no `w` either.
+
+    Note that WeatherQuest can now convert it. `to_z_levels_3d_model` turns
+    omega into a geometric velocity and `processing/preprocessing.jl` calls it
+    with `interp_w = true`, but that path reads `w` from its source file, and
+    when the variable is absent it writes zeros without warning. So asking for
+    the conversion over a file from here is silently a no-op. Requesting `135`
+    again is all it takes to pick the conversion up.
 
   - The files hold only the variables a consumer reads. Dropped, with the
     consumer checked in each case: `si` and `sie` from the land file, which

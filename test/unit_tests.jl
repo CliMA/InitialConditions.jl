@@ -83,7 +83,6 @@ function write_fake_model_file(path; expver = false, levels = TEST_MODEL_LEVELS)
             ("q", 0.005),
             ("u", 10.0),
             ("v", -5.0),
-            ("w", 0.1),
             ("clwc", 1.0e-5),
             ("ciwc", 1.0e-6),
         )
@@ -249,8 +248,9 @@ end
     @test request["levtype"] == "ml"
     @test request["levelist"] == "1/to/137"
     @test request["data_format"] == "netcdf"
-    # t, u, v, q, w, clwc, ciwc
-    @test request["param"] == "130/131/132/133/135/246/247"
+    # t, u, v, q, clwc, ciwc; no 135, the vertical velocity
+    @test request["param"] == "130/131/132/133/246/247"
+    @test !occursin("135", request["param"])
 
     surface = ERA5.single_levels_request(TEST_DATE)
     @test "sea_surface_temperature" in surface["variable"]
@@ -319,9 +319,11 @@ end
             for dim in ("longitude", "latitude", "model_level", "valid_time")
                 @test haskey(ds.dim, dim)
             end
-            for name in ("u", "v", "w", "t", "q", "skt", "sp", "surface_geopotential")
+            for name in ("u", "v", "t", "q", "skt", "sp", "surface_geopotential")
                 @test haskey(ds, name)
             end
+            # The vertical velocity is not requested, so it is not in the file
+            @test !haskey(ds, "w")
             @test size(Array(ds["t"])) == (NLON, NLAT, NLEVELS, 1)
             @test all(Array(ds["surface_geopotential"]) .== 100.0f0)
             # The levels keep the order CDS delivers, 1 at the top
@@ -433,6 +435,7 @@ end
             TEST_DATE;
             dir,
             retrieve_fn = throwing_retrieve,
+            attempts = 1,
         )
         @test !ERA5.files_complete(dir, TEST_DATE)
         for name in ERA5.output_filenames(TEST_DATE)

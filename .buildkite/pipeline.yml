@@ -1,0 +1,45 @@
+agents:
+  queue: central
+  slurm_mem: 16G
+  modules: climacommon/2026_02_18
+
+env:
+  JULIA_DEPOT_PATH: "${BUILDKITE_BUILD_PATH}/${BUILDKITE_PIPELINE_SLUG}/depot/default"
+  SLURM_KILL_BAD_EXIT: 1
+  # Download once per build and reuse across steps, the way a cluster run does
+  INITIAL_CONDITIONS_CACHE_DIR: "${BUILDKITE_BUILD_PATH}/${BUILDKITE_PIPELINE_SLUG}/era5_cache"
+
+steps:
+  - label: "init :computer:"
+    key: "init_cpu_env"
+    command:
+      - echo "--- Instantiate project"
+      - "julia --project=. -e 'using Pkg; Pkg.instantiate(; verbose = true)'"
+      - "julia --project=. -e 'using Pkg; Pkg.precompile()'"
+      - "julia --project=. -e 'using Pkg; Pkg.status()'"
+    agents:
+      slurm_cpus_per_task: 8
+
+  - wait
+
+  # The CDS download is the part GitHub Actions cannot cover: it needs
+  # credentials and can queue for hours. CDS being down is not a code failure,
+  # so this step is allowed to fail without reddening the build.
+  - label: "ERA5 download end to end"
+    key: "network_tests"
+    timeout_in_minutes: 300
+    soft_fail: true
+    env:
+      ERA5_NETWORK_TESTS: "true"
+    command:
+      - "julia --color=yes --project=. test/network_tests.jl"
+
+  # Regression guard: the files this package writes must keep matching the
+  # artifact that WeatherQuest produced, apart from documented differences.
+  - label: "Compare against wxquest_initial_conditions"
+    key: "artifact_comparison"
+    depends_on: "network_tests"
+    timeout_in_minutes: 300
+    soft_fail: true
+    command:
+      - "julia --color=yes --project=. test/artifact_comparison.jl"

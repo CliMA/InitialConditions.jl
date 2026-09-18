@@ -1,3 +1,6 @@
+# Compression for every output file, to splat into `defVar`.
+const COMPRESSION = (; deflatelevel = 1, shuffle = true)
+
 const LON_DIM_NAMES = ("longitude", "lon")
 const LAT_DIM_NAMES = ("latitude", "lat")
 const TIME_DIM_NAMES = ("valid_time", "time")
